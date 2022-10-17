@@ -1,0 +1,164 @@
+buildscript {
+    repositories {
+        repositories {
+            flatDir {
+                dir rootProject.file('base-lib-allcommon-lib')
+            }
+        }
+    }
+    dependencies {
+        classpath(name: 'base-lib-allcommon', ext: 'jar')
+    }
+}
+import com.virjar.ratel.allcommon.Constants
+import com.virjar.ratel.allcommon.NewConstants
+
+import java.lang.reflect.Field
+import java.lang.reflect.Modifier
+
+apply plugin: 'java'
+apply plugin: "com.github.johnrengelman.shadow"
+
+sourceSets.main.resources.srcDir 'src/main/resources'
+
+dependencies {
+    //注意，混淆特殊配置，这里只能使用compile
+    compile fileTree(dir: 'libs', include: ['*.jar'])
+    compile 'org.apache.commons:commons-lang3:3.7'
+    compile 'commons-io:commons-io:2.6'
+    //android版本的fastjson要小很多，可以节约500k的大小
+    compile 'com.alibaba:fastjson:1.1.71.android'
+    compile 'commons-cli:commons-cli:1.4'
+    compile project(':base-lib-dx')
+    compile 'xmlunit:xmlunit:1.6'
+    compile 'xpp3:xpp3:1.1.4c'
+    compile 'commons-cli:commons-cli:1.4'
+    compile 'org.smali:dexlib2:2.5.2'
+    compile 'org.smali:util:2.5.2'
+    compile 'org.smali:baksmali:2.5.2'
+    compile 'org.smali:smali:2.5.2'
+    compile 'org.antlr:antlr-runtime:3.5.2'
+    compile 'org.antlr:stringtemplate:3.2.1'
+    compile 'org.yaml:snakeyaml:1.18:android'
+    compile project(':base-lib-apksigner')
+    compile project(':base-lib-apk-parser')
+    compile project(':base-lib-pxb-axml')
+    compile(name: 'base-lib-allcommon', ext: 'jar')
+    compile 'com.google.guava:guava:18.0'
+}
+
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+
+compileJava {
+    sourceCompatibility = 1.8
+    targetCompatibility = 1.8
+    [compileJava]*.options*.encoding = 'UTF-8'
+}
+
+compileTestJava {
+    sourceCompatibility = 1.8
+    targetCompatibility = 1.8
+    [compileTestJava]*.options*.encoding = 'UTF-8'
+}
+
+
+jar.enabled = false
+shadowJar {
+    baseName = 'container-builder-repkg'
+    //classifier是生成jar包的后缀
+    classifier = null
+    version = rootProject.ext.ratelEngineVersion
+    manifest {
+        attributes 'Main-Class': 'com.virjar.ratel.builder.ratelentry.Main'
+    }
+}
+
+//dexmaker-opt
+task injectDexMakerOptSource(type: Copy) {
+    from '../script/dex_maker_opt.zip'
+    into 'src/main/resources/'
+
+}
+processResources.dependsOn(injectDexMakerOptSource)
+
+
+//xposed bridge jar file
+task injectXposedBridgeAPK(type: Copy) {
+    from '../base-lib-xposed-bridge/build/outputs/apk/release/base-lib-xposed-bridge-release.apk'
+    into 'src/main/resources/'
+    rename {
+        NewConstants.BUILDER_RESOURCE_LAYOUT.XPOSED_BRIDGE_APK_FILE.NAME
+    }
+}
+
+injectXposedBridgeAPK.dependsOn(':base-lib-xposed-bridge:assembleRelease')
+processResources.dependsOn(injectXposedBridgeAPK)
+
+
+//rdp(ratel decompile project)
+task injectRDPJar(type: Copy) {
+    from '../container-builder-rdp/build/libs/RDP-1.0.jar'
+    into 'src/main/resources/'
+    rename {
+        NewConstants.BUILDER_RESOURCE_LAYOUT.RDP_JAR_FILE.NAME
+    }
+}
+
+injectRDPJar.dependsOn(':container-builder-rdp:assemble')
+processResources.dependsOn(injectRDPJar)
+
+// 构建工具的优化器
+task injectBuilderHelperJar(type: Copy) {
+    from '../container-builder-helper/build/libs/BuilderHelper-1.0.jar'
+    into 'src/main/resources/'
+    rename {
+        NewConstants.BUILDER_RESOURCE_LAYOUT.BUILDER_HELPER_NAME.NAME
+    }
+}
+
+injectBuilderHelperJar.dependsOn(':container-builder-helper:assemble')
+processResources.dependsOn(injectBuilderHelperJar)
+
+// 注入代码模版工程
+task injectTemplateApk(type: Copy) {
+    from '../container-inject-template/build/outputs/apk/release/container-inject-template-release.apk'
+    into 'src/main/resources/'
+    rename {
+        NewConstants.BUILDER_RESOURCE_LAYOUT.TEMPLATE_APK_FILE.NAME
+    }
+}
+
+injectTemplateApk.dependsOn(':container-inject-template:assembleRelease')
+processResources.dependsOn(injectTemplateApk)
+
+
+
+task storeBuildConstantsProperties() {
+
+    Properties engineProperties = new Properties()
+    engineProperties.setProperty(Constants.RATEL_CONSTANTS_PREFIX + Constants.RATEL_KEY_ratelEngineVersionCode, String.valueOf(rootProject.ext.ratelEngineVersionCode))
+    engineProperties.setProperty(Constants.RATEL_CONSTANTS_PREFIX + Constants.RATEL_KEY_ratelEngineVersion, String.valueOf(rootProject.ext.ratelEngineVersion))
+
+    for (Field field : Constants.class.declaredFields) {
+        if (!Modifier.isStatic(field.getModifiers())) {
+            continue
+        }
+        if (field.isSynthetic()) {
+            continue
+        }
+        Object value = field.get(null);
+        engineProperties.setProperty(Constants.RATEL_CONSTANTS_PREFIX + field.getName(), String.valueOf(value));
+    }
+
+    FileOutputStream fileOutputStream = new FileOutputStream(new File(rootProject.rootDir, "container-builder-repkg/src/main/resources/" + Constants.CONSTANTS_DEFINE_PROPERTIES))
+    engineProperties.store(fileOutputStream, "auto generated by ratel engine builder")
+    fileOutputStream.close()
+
+}
+processResources.dependsOn(storeBuildConstantsProperties)
+
+assemble.dependsOn(shadowJar)
+
+
